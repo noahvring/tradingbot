@@ -71,6 +71,28 @@ def bracket_prob(dist: dict[int, float], market: Market) -> float | None:
 
 # ------------------------------ data sources ------------------------------
 
+def _utcnow() -> datetime:
+    """Current time (a function so tests can freeze the clock)."""
+    return datetime.now(timezone.utc)
+
+
+def standard_time_now(tz_name: str, now: datetime | None = None) -> datetime:
+    """Current time in the zone's LOCAL STANDARD TIME (no DST shift).
+
+    Kalshi's climate day runs midnight-to-midnight standard time, so during DST
+    12-1am on the wall clock still belongs to the previous climate day.
+    """
+    now = now or _utcnow()
+    local = now.astimezone(ZoneInfo(tz_name))
+    std_offset = local.utcoffset() - (local.dst() or timedelta(0))
+    return now.astimezone(timezone(std_offset))
+
+
+def climate_today(tz_name: str, now: datetime | None = None) -> date:
+    """The climate day currently in progress at a station in `tz_name`."""
+    return standard_time_now(tz_name, now).date()
+
+
 def climate_day_window_utc(d: date, tz_name: str) -> tuple[datetime, datetime]:
     tz = ZoneInfo(tz_name)
     noon = datetime(d.year, d.month, d.day, 12, tzinfo=tz)
@@ -113,7 +135,7 @@ def open_meteo_highs(lat: float, lon: float, d: date, tz_name: str,
 
 def observed_max_so_far(station: str, d: date, tz_name: str, ua: str | None = None) -> int | None:
     start, end = climate_day_window_utc(d, tz_name)
-    now = datetime.now(timezone.utc)
+    now = _utcnow()
     if now < start:
         return None
     data = get_json(f"https://api.weather.gov/stations/{station}/observations",
@@ -164,8 +186,9 @@ def build_forecast(city: dict, d: date, cfg: dict, today: date) -> dict:
             obs = observed_max_so_far(city["station"], d, city["tz"], ua)
         except Exception as e:
             notes.append(f"obs unavailable ({e.__class__.__name__})")
-        local_hour = datetime.now(ZoneInfo(city["tz"])).hour
-        if local_hour >= 17:
+        # Hour of the climate day in local standard time (11:30pm CST and
+        # 12:30am CDT both count as late in the same day).
+        if standard_time_now(city["tz"]).hour >= 17:
             sigma = min(sigma, 1.2)   # high is usually locked in by late afternoon
             notes.append("late day: high likely already set")
 
@@ -176,10 +199,10 @@ def build_forecast(city: dict, d: date, cfg: dict, today: date) -> dict:
 def recommend(cfg: dict) -> tuple[list[Rec], list[str]]:
     recs: list[Rec] = []
     log: list[str] = []
-    today = datetime.now(ZoneInfo("America/New_York")).date()
     max_lead = cfg["weather"]["max_lead_days"]
 
     for city in cfg["weather"]["cities"]:
+        today = climate_today(city["tz"])   # per city, not New York's date
         try:
             markets = get_markets(series_ticker=city["series"])
         except Exception as e:

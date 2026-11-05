@@ -16,7 +16,7 @@ cd ~/Downloads/kalshi_scout          # wherever you unzipped it
 python3 -m venv .venv
 source .venv/bin/activate            # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-python -m pytest -q                  # should say "22 passed"
+python -m pytest -q                  # should say "24 passed"
 ```
 
 **Optional (for sports):** get a free key at <https://the-odds-api.com> (500 requests/month,

@@ -141,7 +141,7 @@ def test_climate_day_uses_standard_time():
 
 
 def test_weather_recommend_offline(monkeypatch):
-    today = datetime.now(weather.ZoneInfo("America/New_York")).date()
+    today = weather.climate_today("America/New_York")
     ev = f"KXHIGHNY-{today:%y}{today.strftime('%b').upper()}{today:%d}"
     def mkm(t, st, lo, hi, ask):
         return kalshi.Market.from_api(dict(RAW_BRACKET, ticker=f"{ev}-{t}", event_ticker=ev,
@@ -163,6 +163,46 @@ def test_weather_recommend_offline(monkeypatch):
     assert "B57" not in tickers              # model 24% vs NO at 73c: edge too thin after fees
     assert tickers.get("T58") == "NO"        # model ~2% vs 15c YES -> NO is underpriced
     assert any("mu=55.5" in l for l in log)
+
+
+def test_climate_today_uses_local_standard_time():
+    # Nov 6 05:30 UTC = 11:30pm Nov 5 in Chicago (CST), 12:30am Nov 6 in New York (EST)
+    now = datetime(2026, 11, 6, 5, 30, tzinfo=timezone.utc)
+    assert weather.climate_today("America/Chicago", now) == date(2026, 11, 5)
+    assert weather.climate_today("America/New_York", now) == date(2026, 11, 6)
+    # DST: 12:30am CDT on Jul 5 is still the Jul 4 climate day (11:30pm CST)
+    dst = datetime(2026, 7, 5, 5, 30, tzinfo=timezone.utc)
+    assert dst.astimezone(weather.ZoneInfo("America/Chicago")).day == 5
+    assert weather.climate_today("America/Chicago", dst) == date(2026, 7, 4)
+    assert weather.standard_time_now("America/Chicago", dst).hour == 23
+
+
+def test_weather_uses_each_citys_own_date(monkeypatch):
+    """11:30pm in Chicago / 12:30am in New York: Chicago's Nov 5 market is still
+    today (late-day sigma), and Nov 6 is lead 1 (not treated as same-day)."""
+    now = datetime(2026, 11, 6, 5, 30, tzinfo=timezone.utc)
+    monkeypatch.setattr(weather, "_utcnow", lambda: now)
+    chi = next(c for c in CFG["weather"]["cities"] if c["series"] == "KXHIGHCHI")
+    cfg = dict(CFG, weather=dict(CFG["weather"], cities=[chi]))
+
+    def mkm(ev):
+        return kalshi.Market.from_api(dict(RAW_BRACKET, ticker=f"{ev}-B50.5", event_ticker=ev,
+                                           floor_strike=50, cap_strike=51))
+    markets = [mkm("KXHIGHCHI-26NOV05"), mkm("KXHIGHCHI-26NOV06")]
+    monkeypatch.setattr(weather, "get_markets", lambda **k: markets)
+    monkeypatch.setattr(weather, "get_orderbook", lambda t: kalshi.parse_orderbook({"orderbook": {}}))
+    monkeypatch.setattr(weather, "nws_forecast_high", lambda *a, **k: 50.0)
+    monkeypatch.setattr(weather, "open_meteo_highs", lambda *a, **k: {"gfs_seamless": 50.0})
+    obs_days = []
+    monkeypatch.setattr(weather, "observed_max_so_far",
+                        lambda st, d, tz, ua=None: obs_days.append(d) or 49)
+
+    _, log = weather.recommend(cfg)
+    by_ev = {l.split(":")[0].split()[-1]: l for l in log if "mu=" in l}
+    assert "KXHIGHCHI-26NOV05" in by_ev, log               # today's market not skipped
+    assert "sigma=1.2" in by_ev["KXHIGHCHI-26NOV05"]        # late in Chicago's day
+    assert "sigma=2.8" in by_ev["KXHIGHCHI-26NOV06"]        # lead-1 sigma, no late-day cut
+    assert obs_days == [date(2026, 11, 5)]                  # observations only for today
 
 
 # ----------------------------- sports ---------------------------------
