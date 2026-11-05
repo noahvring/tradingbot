@@ -1,0 +1,75 @@
+# ===================== Kalshi Scout settings =====================
+# Edit these freely. Probabilities/prices are 0-1, money is in dollars.
+
+categories: [weather, sports, politics]
+db_file: scout.db
+output_dir: output
+
+sizing:
+  bankroll: 200            # the money you're willing to put on Kalshi in total
+  kelly_fraction: 0.25     # quarter-Kelly. Full Kelly is way too aggressive for a new model
+  max_per_trade: 15        # hard cap per recommendation
+  max_total_exposure: 75   # cap on the sum of all recs in one run
+
+filters:
+  min_edge: 0.05           # model prob must beat price + fee by 5 points
+  min_edge_by_category:    # tighter bar where your model is weaker
+    weather: 0.06
+    sports: 0.03           # sharp-book devig is a strong signal, but edges are small
+    politics: 0.08
+  min_price: 0.04          # skip lottery tickets...
+  max_price: 0.94          # ...and near-certainties (fees eat them)
+  max_spread: 0.08         # skip markets with a bid/ask gap wider than 8c
+  min_volume: 50           # skip markets almost nobody trades
+
+fees:                      # Kalshi taker fee rate: ceil(rate * C * P * (1-P))
+  default: 0.07            # verify on Kalshi's fee schedule - some series differ
+  weather: 0.07
+  sports: 0.07
+  politics: 0.07
+
+weather:
+  max_lead_days: 2         # forecasts > 2 days out are too fuzzy for daily-high brackets
+  nws_weight: 1.5          # NWS counts 1.5x vs each global model
+  open_meteo_models: [gfs_seamless, ecmwf_ifs025, icon_seamless]
+  disagreement_multiplier: 0.8
+  sigma_by_lead_days:      # typical forecast error (degF std dev) by days ahead
+    0: 2.0
+    1: 2.8
+    2: 3.5
+  bias: {}                 # e.g. {KXHIGHNY: 0.5} once your stats show a consistent miss
+  # Verify each series ticker by opening the market on kalshi.com (it's in the URL).
+  # The station is the one in the market's settlement rules.
+  cities:
+    - {series: KXHIGHNY,   station: KNYC, lat: 40.7789, lon: -73.9692,  tz: America/New_York}
+    - {series: KXHIGHCHI,  station: KMDW, lat: 41.7868, lon: -87.7522,  tz: America/Chicago}
+    - {series: KXHIGHMIA,  station: KMIA, lat: 25.7906, lon: -80.3164,  tz: America/New_York}
+    - {series: KXHIGHLAX,  station: KLAX, lat: 33.9382, lon: -118.3866, tz: America/Los_Angeles}
+    - {series: KXHIGHAUS,  station: KAUS, lat: 30.1831, lon: -97.6799,  tz: America/Chicago}
+    - {series: KXHIGHDEN,  station: KDEN, lat: 39.8466, lon: -104.6562, tz: America/Denver}
+    - {series: KXHIGHPHIL, station: KPHL, lat: 39.8733, lon: -75.2268,  tz: America/New_York}
+
+sports:
+  odds_api_key: ""         # or set env var ODDS_API_KEY. Free at the-odds-api.com
+  sharp_books: [pinnacle, betonlineag, lowvig]
+  min_books: 4             # if no sharp book, need this many books for a median
+  min_match_score: 0.70    # how sure the Kalshi<->sportsbook game match must be
+  include_live: false      # skip games already in progress
+  # Each league uses 1 Odds API request per run. Verify Kalshi series on kalshi.com.
+  leagues:
+    - {name: NFL,   odds_key: americanfootball_nfl,   kalshi_series: KXNFLGAME}
+    - {name: NBA,   odds_key: basketball_nba,         kalshi_series: KXNBAGAME}
+    - {name: NHL,   odds_key: icehockey_nhl,          kalshi_series: KXNHLGAME}
+    - {name: NCAAF, odds_key: americanfootball_ncaaf, kalshi_series: KXNCAAFGAME}
+    - {name: NCAAB, odds_key: basketball_ncaab,       kalshi_series: KXNCAAMBGAME}
+    # - {name: MLB, odds_key: baseball_mlb,           kalshi_series: KXMLBGAME}   # spring
+
+politics:
+  priors_file: politics_priors.yaml
+  cross_check: true        # compare with Polymarket for research leads
+  min_similarity: 0.45     # question-text match threshold
+  min_gap: 0.07            # only show gaps of 7+ points
+  max_leads: 15
+
+# Optional: some services ask for contact info in the User-Agent. Leave blank to use a generic one.
+user_agent: ""

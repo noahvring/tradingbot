@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+scout.db
+output/*
+!output/.gitkeep

@@ -1,0 +1,16 @@
+# Your own probabilities for specific politics markets.
+# Find a ticker on kalshi.com (open the market; the ticker is shown in the market
+# details / URL). `prob` is YOUR estimate that the market resolves YES.
+#
+# Good habits:
+#   - Write down where the number came from (polling average, forecast model, etc.)
+#   - Update or delete entries when news changes; stale priors = bad recs
+#   - Read the resolution rules. Many politics "mistakes" are rules mistakes.
+#
+# Example (replace with real tickers - these are placeholders and won't load):
+#
+# - ticker: KXEXAMPLE-28-ABC
+#   prob: 0.62
+#   confidence: medium        # high / medium / low
+#   note: "538-style average +4, 3 polls in last 2 weeks"
+[]
