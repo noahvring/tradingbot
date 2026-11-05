@@ -87,6 +87,9 @@ def evaluate(market: Market, p_yes: float, cfg: dict, category: str, reasoning: 
         if contracts < 1:
             continue
 
+        if edge > 0.20:
+            w.append(f"edge {edge * 100:.0f} pts is implausibly large for a liquid market - "
+                     "assume the model is missing something until stats prove otherwise")
         ev = p - ask - fee
         rec = Rec(
             category=category, ticker=market.ticker, event_ticker=market.event_ticker,

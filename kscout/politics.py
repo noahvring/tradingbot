@@ -83,9 +83,17 @@ def _tok(s: str) -> set[str]:
     return {t for t in re.findall(r"[a-z0-9]+", s.lower()) if t not in _STOP and len(t) > 2}
 
 
+def _nums(s: str) -> set[str]:
+    return set(re.findall(r"\d+", s))
+
+
 def similarity(a: str, b: str) -> float:
     ta, tb = _tok(a), _tok(b)
     if not ta or not tb:
+        return 0.0
+    # Years, district numbers, thresholds etc. must agree: "2028 Ohio District 23"
+    # is not "2026 CT-04 by 35%-40%" however many words they share.
+    if _nums(a) != _nums(b):
         return 0.0
     return len(ta & tb) / len(ta | tb)
 

@@ -234,6 +234,12 @@ def recommend(cfg: dict) -> tuple[list[Rec], list[str]]:
                        f"obs_max={fc['obs']} | {src}")
             conf = "high" if fc["lead"] == 0 and fc["model_spread"] < 1.5 else \
                    "medium" if fc["model_spread"] < 3 else "low"
+            if fc["obs"] is not None and fc["obs"] >= fc["mu"]:
+                # Already warmer than the forecast high (e.g. warm overnight, falling
+                # temps): the daily-high forecast is stale. Don't trust brackets.
+                conf = "low"
+                warn.append(f"observed {fc['obs']}F already >= forecast high {fc['mu']:.1f}F; "
+                            "forecast likely stale (high may already be set)")
 
             for m in ms:
                 p = probs.get(m.ticker)

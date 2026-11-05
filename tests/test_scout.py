@@ -247,6 +247,8 @@ def test_similarity():
     assert politics.similarity("Who will win the 2028 Democratic nomination? Newsom",
                                "Will Gavin Newsom win the 2028 Democratic nomination?") > 0.45
     assert politics.similarity("Fed cuts rates in December", "Newsom nomination") < 0.1
+    assert politics.similarity("Will the Democratic Party win the 2028 Ohio House District 23 election?",
+                               "Will the Democratic Party candidate win the 2026 CT-04 House election?") == 0
 
 
 def test_priors_file_loads(tmp_path):
