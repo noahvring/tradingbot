@@ -13,7 +13,8 @@ For each city it:
      local standard time;
   3. prints bias (actual - forecast) and error spread (sigma) by lead day;
   4. scores the model vs Kalshi's own price (Brier) on the lead-1 markets,
-     using the price at 10am local standard time the day before.
+     using the price at 10am local standard time the day before, and finds the
+     best `model_weight` for blending the two.
 
 The NWS forecast isn't archived, so the forecast here is the equal-weight mean
 of the global models, without the NWS blend the live model uses.
@@ -147,7 +148,7 @@ def main() -> None:
     today = date.today()
     since = today - timedelta(days=a.days)
     suggest_bias, suggest_sigma = {}, {}
-    all_model, all_mkt = [], []
+    all_model, all_mkt, triples = [], [], []
 
     for city in w["cities"]:
         s = city["series"]
@@ -211,7 +212,7 @@ def main() -> None:
                 if q is None:
                     continue
                 y = 1.0 if m.result == "yes" else 0.0
-                mp.append((p, y)); kp.append((q, y))
+                mp.append((p, y)); kp.append((q, y)); triples.append((p, q, y))
         all_model += mp; all_mkt += kp
         if mp:
             print(f"  Brier, lead 1, {len(mp)} brackets:  model {brier(mp):.4f}   market {brier(kp):.4f}   "
@@ -232,6 +233,14 @@ def main() -> None:
               f"over {len(all_model)} brackets ===")
         print("Model beats the market." if bm < bk else
               "The market beat the model. Don't trade weather on this model as-is.")
+        # Best blend weight: p_final = w * model + (1 - w) * market
+        grid = [i / 20 for i in range(21)]
+        scores = {wt: brier([(wt * p + (1 - wt) * q, y) for p, q, y in triples]) for wt in grid}
+        best = min(scores, key=scores.get)
+        print(f"Best blend weight (Brier {scores[best]:.4f}):  model_weight: {{weather: {best:.2f}}}"
+              f"   [config now {cfg.get('model_weight', {}).get('weather', 1.0)}]")
+        if best == 0:
+            print("  -> w = 0: the model adds nothing beyond the market price.")
 
 
 if __name__ == "__main__":

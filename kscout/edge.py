@@ -36,8 +36,10 @@ class Rec:
     expected_profit: float
     confidence: str           # high / medium / low
     reasoning: str
-    model_yes_prob: float     # model P(YES) - stored for calibration tracking
+    model_yes_prob: float     # P(YES) the trade is based on (blended) - for calibration tracking
     close_time: str = ""
+    raw_model_yes_prob: float | None = None   # model alone, before blending with the market
+    market_yes_prob: float | None = None      # market mid used in the blend
     warnings: list[str] = field(default_factory=list)
 
 
@@ -48,6 +50,25 @@ def kelly_fraction(p: float, cost: float) -> float:
     return max(0.0, (p - cost) / (1 - cost))
 
 
+def market_yes_prob(market: Market) -> float | None:
+    """The market's own P(YES): bid/ask mid, else last trade."""
+    if market.yes_bid is not None and market.yes_ask is not None and market.yes_bid > 0:
+        return (market.yes_bid + market.yes_ask) / 2
+    return market.last_price if market.last_price else None
+
+
+def blend(p_model: float, market: Market, cfg: dict, category: str) -> tuple[float, float | None, float]:
+    """p_final = w * p_model + (1 - w) * p_market, w from config `model_weight`.
+
+    Returns (p_final, p_market, w). With no usable market price, the model alone.
+    """
+    w = float(cfg.get("model_weight", {}).get(category, 1.0))
+    q = market_yes_prob(market)
+    if q is None:
+        return p_model, None, w
+    return w * p_model + (1 - w) * q, q, w
+
+
 def evaluate(market: Market, p_yes: float, cfg: dict, category: str, reasoning: str,
              confidence: str = "medium", orderbook: dict | None = None,
              warnings: list[str] | None = None) -> Rec | None:
@@ -56,7 +77,12 @@ def evaluate(market: Market, p_yes: float, cfg: dict, category: str, reasoning: 
     f = cfg["filters"]
     fee_rate = cfg.get("fees", {}).get(category, cfg.get("fees", {}).get("default", 0.07))
     min_edge = f.get("min_edge_by_category", {}).get(category, f["min_edge"])
+    raw = min(max(p_yes, 0.001), 0.999)
+    p_yes, q, w_model = blend(raw, market, cfg, category)
     p_yes = min(max(p_yes, 0.001), 0.999)
+    if q is not None and w_model < 1:
+        reasoning = (f"{reasoning} Blend: {w_model:.0%} model {raw:.0%} + {1 - w_model:.0%} "
+                     f"market {q:.0%} = {p_yes:.0%}.")
 
     best: Rec | None = None
     for side, ask, p in (("YES", market.yes_ask, p_yes), ("NO", market.no_ask, 1 - p_yes)):
@@ -99,6 +125,7 @@ def evaluate(market: Market, p_yes: float, cfg: dict, category: str, reasoning: 
             cost=round(contracts * all_in, 2), expected_profit=round(contracts * ev, 2),
             confidence=confidence, reasoning=reasoning, model_yes_prob=p_yes,
             close_time=market.close_time, warnings=w,
+            raw_model_yes_prob=raw, market_yes_prob=q,
         )
         if best is None or rec.expected_profit > best.expected_profit:
             best = rec

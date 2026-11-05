@@ -34,7 +34,7 @@ def print_recs(recs: list[Rec], ids: list[int], leads: list[dict], log: list[str
             print(f"    Ticker: {r.ticker}")
             print(f"    >>> BUY {r.side}  x{r.contracts}  at ${r.price:.2f}  "
                   f"(limit order, max ${r.limit_price:.2f})  cost ${r.cost:.2f}")
-            print(f"    Model {r.model_prob:.1%} vs market {r.market_prob:.1%}  ->  "
+            print(f"    P(win) {r.model_prob:.1%} (model/market blend) vs price {r.market_prob:.1%}  ->  "
                   f"edge {r.edge * 100:+.1f} pts after fees, EV ${r.expected_profit:+.2f}")
             print(f"    Why: {r.reasoning}")
             print(f"    Closes: {_fmt_close(r.close_time)}")
@@ -68,7 +68,7 @@ def save(recs: list[Rec], ids: list[int], leads: list[dict], out_dir: str) -> tu
 
     lines = [f"# Kalshi Scout — {datetime.now():%a %b %d, %Y %I:%M %p}", ""]
     if recs:
-        lines += ["| id | Cat | Market | Buy | Qty | Price | Max | Model | Edge | EV | Conf |",
+        lines += ["| id | Cat | Market | Buy | Qty | Price | Max | P(win) | Edge | EV | Conf |",
                   "|---|---|---|---|---|---|---|---|---|---|---|"]
         for r, rid in zip(recs, ids):
             lines.append(f"| {rid} | {r.category} | {r.title[:60]} (`{r.ticker}`) | {r.side} | "

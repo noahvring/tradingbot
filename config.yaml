@@ -22,6 +22,15 @@ filters:
   max_spread: 0.08         # skip markets with a bid/ask gap wider than 8c
   min_volume: 50           # skip markets almost nobody trades
 
+# How much to trust the model vs the market's own price:
+#   p_final = w * p_model + (1 - w) * p_market   (p_market = bid/ask mid)
+# 1.0 = model is truth, 0.0 = never disagree with the market. Start low; raise only
+# if `calibrate.py` (weather) or `stats` (all) shows the model adds information.
+model_weight:
+  weather: 0.3
+  sports: 0.5
+  politics: 0.5            # applies to your priors in politics_priors.yaml
+
 fees:                      # Kalshi taker fee rate: ceil(rate * C * P * (1-P))
   default: 0.07            # verify on Kalshi's fee schedule - some series differ
   weather: 0.07
@@ -33,6 +42,10 @@ weather:
   nws_weight: 1.5          # NWS counts 1.5x vs each global model
   open_meteo_models: [gfs_seamless, ecmwf_ifs025, icon_seamless]
   disagreement_multiplier: 0.8
+  # Same-day markets: high = max(observed so far, NWS hourly forecast for the rest of
+  # the climate day). Hourly points miss the peak between hours, hence the bump.
+  same_day_remaining_sigma: 1.8   # error (degF) of the rest-of-day max; 1.2 with < 6h left
+  hourly_peak_bump: 0.5
   sigma_by_lead_days:      # typical forecast error (degF std dev) by days ahead
     0: 2.0
     1: 2.8

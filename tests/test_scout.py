@@ -11,6 +11,8 @@ from kscout.http import ReadOnlyViolation, get_json
 
 ROOT = Path(__file__).resolve().parents[1]
 CFG = yaml.safe_load((ROOT / "config.yaml").read_text())
+# Model-as-truth config (no market blend) for tests of the model/sizing math itself
+RAW = dict(CFG, model_weight={"weather": 1.0, "sports": 1.0, "politics": 1.0})
 
 
 # ----------------------------- safety ---------------------------------
@@ -87,27 +89,27 @@ def test_kelly():
 
 def test_evaluate_picks_yes_when_underpriced():
     m = kalshi.Market.from_api(RAW_BRACKET)   # YES ask 0.34
-    r = edge.evaluate(m, 0.50, CFG, "weather", "test")
+    r = edge.evaluate(m, 0.50, RAW, "weather", "test")
     assert r and r.side == "YES" and r.edge > 0.1 and r.contracts >= 1
-    assert r.cost <= CFG["sizing"]["max_per_trade"] + 0.01
+    assert r.cost <= RAW["sizing"]["max_per_trade"] + 0.01
     assert r.limit_price >= r.price
 
 
 def test_evaluate_picks_no_when_overpriced():
     m = kalshi.Market.from_api(RAW_BRACKET)   # NO ask 0.70 -> need P(NO) > ~0.77
-    r = edge.evaluate(m, 0.10, CFG, "weather", "test")
+    r = edge.evaluate(m, 0.10, RAW, "weather", "test")
     assert r and r.side == "NO"
 
 
 def test_evaluate_none_when_fair():
     m = kalshi.Market.from_api(RAW_BRACKET)
-    assert edge.evaluate(m, 0.32, CFG, "weather", "test") is None
+    assert edge.evaluate(m, 0.32, RAW, "weather", "test") is None
 
 
 def test_orderbook_caps_size():
     m = kalshi.Market.from_api(RAW_BRACKET)
     ob = kalshi.parse_orderbook({"orderbook": {"yes": [], "no": [[66, 3]]}})
-    r = edge.evaluate(m, 0.55, CFG, "weather", "t", orderbook=ob)
+    r = edge.evaluate(m, 0.55, RAW, "weather", "t", orderbook=ob)
     assert r.contracts == 3 and any("only 3" in w for w in r.warnings)
 
 
@@ -150,7 +152,7 @@ def test_weather_recommend_offline(monkeypatch):
     markets = [mkm("T51", "less", None, 51, 5), mkm("B51", "between", 51, 52, 10),
                mkm("B53", "between", 53, 54, 20), mkm("B55", "between", 55, 56, 20),  # model ~40%
                mkm("B57", "between", 57, 58, 30), mkm("T58", "greater", 58, None, 15)]
-    cfg = dict(CFG, weather=dict(CFG["weather"], cities=[CFG["weather"]["cities"][0]]))
+    cfg = dict(RAW, weather=dict(CFG["weather"], cities=[CFG["weather"]["cities"][0]]))
     monkeypatch.setattr(weather, "get_markets", lambda **k: markets)
     monkeypatch.setattr(weather, "build_forecast", lambda *a: {
         "ok": True, "mu": 55.5, "sigma": 1.8, "obs": None, "sources": {"NWS": 56, "gfs_seamless": 55},
@@ -193,6 +195,9 @@ def test_weather_uses_each_citys_own_date(monkeypatch):
     monkeypatch.setattr(weather, "get_orderbook", lambda t: kalshi.parse_orderbook({"orderbook": {}}))
     monkeypatch.setattr(weather, "nws_forecast_high", lambda *a, **k: 50.0)
     monkeypatch.setattr(weather, "open_meteo_highs", lambda *a, **k: {"gfs_seamless": 50.0})
+    def no_hourly(*a, **k):
+        raise RuntimeError("hourly down")         # exercise the daily-high fallback path
+    monkeypatch.setattr(weather, "nws_remaining_hourly", no_hourly)
     obs_days = []
     monkeypatch.setattr(weather, "observed_max_so_far",
                         lambda st, d, tz, ua=None: obs_days.append(d) or 49)
@@ -203,6 +208,55 @@ def test_weather_uses_each_citys_own_date(monkeypatch):
     assert "sigma=1.2" in by_ev["KXHIGHCHI-26NOV05"]        # late in Chicago's day
     assert "sigma=2.8" in by_ev["KXHIGHCHI-26NOV06"]        # lead-1 sigma, no late-day cut
     assert obs_days == [date(2026, 11, 5)]                  # observations only for today
+
+
+def test_max_distribution_warm_night_then_cooling():
+    # Chicago 1am: already 54F, rest of day forecast to peak ~50.5F -> high is almost surely 54
+    d = weather.max_distribution(54, 50.5, 1.8)
+    assert sum(d.values()) == pytest.approx(1.0) and min(d) == 54
+    assert d[54] > 0.95
+    # Morning at 45F with 60F expected later: observed max barely matters
+    d2 = weather.max_distribution(45, 60.0, 1.8)
+    assert max(d2, key=d2.get) == 60 and d2[45] < 1e-6
+
+
+def test_same_day_uses_hourly_rest_of_day(monkeypatch):
+    # Nov 5, 07:30Z = 1:30am CST in Chicago; obs 54, hourly says it cools all day
+    now = datetime(2026, 11, 5, 7, 30, tzinfo=timezone.utc)
+    monkeypatch.setattr(weather, "_utcnow", lambda: now)
+    chi = next(c for c in CFG["weather"]["cities"] if c["series"] == "KXHIGHCHI")
+    monkeypatch.setattr(weather, "nws_forecast_high", lambda *a, **k: 52.0)
+    monkeypatch.setattr(weather, "open_meteo_highs", lambda *a, **k: {"gfs_seamless": 53.0})
+    monkeypatch.setattr(weather, "observed_max_so_far", lambda *a, **k: 54)
+    seen = {}
+    def hourly(lat, lon, start, end, ua=None):
+        seen["window"] = (start, end)
+        return [51.0, 50.0, 49.0, 48.0]
+    monkeypatch.setattr(weather, "nws_remaining_hourly", hourly)
+    fc = weather.build_forecast(chi, date(2026, 11, 5), CFG, date(2026, 11, 5))
+    assert fc["mode"] == "hourly"
+    assert seen["window"] == (now, datetime(2026, 11, 6, 6, tzinfo=timezone.utc))  # midnight CST
+    m = kalshi.Market.from_api(dict(RAW_BRACKET, strike_type="less", floor_strike=None, cap_strike=55))
+    assert weather.bracket_prob(fc["dist"], m) > 0.85          # "54 or below" very likely (market: ~85%)
+    # Old approach (daily high truncated at obs) gave this only ~40%
+    old = weather.integer_distribution(52.8, 2.2, 54)
+    assert weather.bracket_prob(old, m) < 0.5
+
+
+def test_blend_with_market():
+    m = kalshi.Market.from_api(RAW_BRACKET)        # yes bid .30 / ask .34 -> mid .32
+    p, q, w = edge.blend(0.50, m, CFG, "weather")
+    assert q == pytest.approx(0.32) and w == 0.3
+    assert p == pytest.approx(0.3 * 0.50 + 0.7 * 0.32)
+    # Blended 0.374 vs ask 0.34: edge too thin to trade, though the raw model would
+    assert edge.evaluate(m, 0.50, CFG, "weather", "t") is None
+    assert edge.evaluate(m, 0.50, RAW, "weather", "t") is not None
+    r = edge.evaluate(m, 0.90, CFG, "weather", "t")
+    assert r.side == "YES" and r.model_yes_prob == pytest.approx(0.3 * 0.9 + 0.7 * 0.32)
+    assert r.raw_model_yes_prob == pytest.approx(0.9) and "Blend: 30% model" in r.reasoning
+    # No usable market price -> model alone
+    lone = kalshi.Market.from_api(dict(RAW_BRACKET, yes_bid=0, last_price=None))
+    assert edge.blend(0.5, lone, CFG, "weather")[0] == 0.5
 
 
 # ----------------------------- sports ---------------------------------
@@ -263,7 +317,7 @@ def test_priors_file_loads(tmp_path):
 def test_tracker_roundtrip(tmp_path, monkeypatch):
     con = tracker.connect(str(tmp_path / "t.db"))
     m = kalshi.Market.from_api(RAW_BRACKET)
-    r = edge.evaluate(m, 0.50, CFG, "weather", "test")
+    r = edge.evaluate(m, 0.50, RAW, "weather", "test")
     ids = tracker.log_recs(con, [r])
     assert tracker.log_recs(con, [r]) == ids          # deduped
     tracker.mark_taken(con, ids[0], 0.34, 5)

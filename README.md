@@ -16,7 +16,7 @@ cd ~/Downloads/kalshi_scout          # wherever you unzipped it
 python3 -m venv .venv
 source .venv/bin/activate            # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-python -m pytest -q                  # should say "24 passed"
+python -m pytest -q                  # should say "28 passed"
 ```
 
 **Optional (for sports):** get a free key at <https://the-odds-api.com> (500 requests/month,
@@ -117,6 +117,19 @@ There's no free, reliable feed of "fair" political probabilities, so the tool do
   questions differently. Read both sets of rules before acting.
 
 ---
+
+### Model vs market blend
+Every category's probability is blended with the market's own price before computing edge:
+`p_final = w * p_model + (1 - w) * p_market` (market = bid/ask mid). `model_weight` in
+`config.yaml` sets `w` per category (weather 0.3, sports 0.5, politics priors 0.5 to start).
+`python calibrate.py` prints the best weather weight from past outcomes. `stats` shows the
+Brier score of the raw model, the market, and the blend, so you can tune the others.
+
+### Same-day weather
+For today's market the high is `max(observed so far, NWS hourly forecast for the rest of the
+climate day)`. If it was 54°F at 1am and the hourly forecast cools all day, "54° or below" is
+very likely, whatever the daily-high forecast said. With 12+ hours left, the rest-of-day peak
+is averaged with the multi-model daily high and keeps its wider uncertainty.
 
 ## 4. Sizing logic
 - **Quarter-Kelly**: bet a quarter of what the Kelly formula says. Full Kelly assumes your model

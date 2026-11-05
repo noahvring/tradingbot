@@ -16,7 +16,8 @@ CREATE TABLE IF NOT EXISTS recs (
     side TEXT, price REAL, limit_price REAL, model_prob REAL, model_yes_prob REAL,
     edge REAL, contracts INTEGER, cost REAL, expected_profit REAL, confidence TEXT,
     reasoning TEXT, close_time TEXT,
-    result TEXT, settled_at TEXT
+    result TEXT, settled_at TEXT,
+    raw_model_yes_prob REAL, market_yes_prob REAL
 );
 CREATE TABLE IF NOT EXISTS taken (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -30,6 +31,10 @@ def connect(path: str) -> sqlite3.Connection:
     con = sqlite3.connect(path)
     con.row_factory = sqlite3.Row
     con.executescript(SCHEMA)
+    cols = {r["name"] for r in con.execute("PRAGMA table_info(recs)")}
+    for col in ("raw_model_yes_prob", "market_yes_prob"):   # upgrade older scout.db files
+        if col not in cols:
+            con.execute(f"ALTER TABLE recs ADD COLUMN {col} REAL")
     return con
 
 
@@ -50,11 +55,12 @@ def log_recs(con: sqlite3.Connection, recs: list[Rec], dedupe_hours: float = 6) 
         cur = con.execute(
             """INSERT INTO recs (created_at, category, ticker, event_ticker, title, side, price,
                limit_price, model_prob, model_yes_prob, edge, contracts, cost, expected_profit,
-               confidence, reasoning, close_time) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               confidence, reasoning, close_time, raw_model_yes_prob, market_yes_prob)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (now.isoformat(), d["category"], d["ticker"], d["event_ticker"], d["title"], d["side"],
              d["price"], d["limit_price"], d["model_prob"], d["model_yes_prob"], d["edge"],
              d["contracts"], d["cost"], d["expected_profit"], d["confidence"], d["reasoning"],
-             d["close_time"]))
+             d["close_time"], d["raw_model_yes_prob"], d["market_yes_prob"]))
         ids.append(cur.lastrowid)
     con.commit()
     return ids
@@ -118,6 +124,12 @@ def stats(con) -> str:
         lines.append(f"  Hit rate:            {wins}/{n} = {wins / n:.0%}")
         lines.append(f"  Brier (model):       {brier:.4f}   (lower is better)")
         lines.append(f"  Brier (market price): {mkt_brier:.4f}  <- model must beat this")
+        both = [r for r in rs if r["raw_model_yes_prob"] is not None and r["market_yes_prob"] is not None]
+        if both:
+            def b(key):
+                return sum((r[key] - (r["result"] == "yes")) ** 2 for r in both) / len(both)
+            lines.append(f"  Brier on {len(both)} with blend data: raw model {b('raw_model_yes_prob'):.4f}, "
+                         f"market mid {b('market_yes_prob'):.4f}, blended {b('model_yes_prob'):.4f}")
         lines.append(f"  Log loss:            {ll:.4f}")
         lines.append(f"  Paper P&L:           ${pnl:+.2f} on ${risk:.2f} risked "
                      f"(ROI {pnl / risk:+.1%})" if risk else "")
