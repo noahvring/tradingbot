@@ -16,6 +16,8 @@ ALLOWED_HOSTS = {
     "api.elections.kalshi.com",      # Kalshi public market data
     "api.weather.gov",               # National Weather Service
     "api.open-meteo.com",            # Open-Meteo multi-model forecasts
+    "previous-runs-api.open-meteo.com",       # past forecasts by lead day (calibrate.py)
+    "historical-forecast-api.open-meteo.com", # archived forecasts
     "api.the-odds-api.com",          # Sportsbook odds (free key)
     "gamma-api.polymarket.com",      # Polymarket public market data
 }

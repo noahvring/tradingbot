@@ -19,7 +19,7 @@ def test_no_trading_code_anywhere():
     """The project must not contain any way to place/cancel orders or authenticate."""
     banned = [r"\.post\(", r"\.put\(", r"\.delete\(", r"portfolio/orders", r"KALSHI-ACCESS",
               r"private_key", r"/login"]
-    for f in (ROOT / "kscout").glob("*.py"):
+    for f in [*(ROOT / "kscout").glob("*.py"), ROOT / "scout.py", ROOT / "calibrate.py"]:
         text = f.read_text()
         for pat in banned:
             assert not re.search(pat, text), f"{pat} found in {f.name}"
@@ -271,3 +271,23 @@ def test_tracker_roundtrip(tmp_path, monkeypatch):
     assert "settled YES" in tracker.settle(con)[0]
     out = tracker.stats(con)
     assert "Hit rate" in out and "1/1" in out and "real P&L" in out
+
+
+# ----------------------------- calibrate ------------------------------
+
+def test_calibrate_actual_highs_and_daily_max():
+    import calibrate
+    ms = [kalshi.Market.from_api(dict(RAW_BRACKET, result=r, strike_type=st, floor_strike=lo, cap_strike=hi))
+          for r, st, lo, hi in [("no", "less", None, 55), ("yes", "between", 55, 56), ("no", "greater", 56, None)]]
+    assert calibrate.actual_highs(ms) == {date(2026, 11, 5): (55.5, ms)}
+    tail = [kalshi.Market.from_api(dict(RAW_BRACKET, result="yes", strike_type="greater", floor_strike=56))]
+    assert calibrate.actual_highs(tail) == {}
+    # 48 UTC hours; NY climate day Nov 5 = 05:00Z Nov 5 .. 04:00Z Nov 6 (EST)
+    t0 = datetime(2026, 11, 5, 0, tzinfo=timezone.utc)
+    times = [(t0 + timedelta(hours=i)).strftime("%Y-%m-%dT%H:%M") for i in range(48)]
+    vals = [50.0] * 48
+    vals[3] = 90.0      # 03Z Nov 5 = 10pm Nov 4 EST -> must not count for Nov 5
+    vals[20] = 60.0     # 20Z Nov 5 = 3pm EST
+    hourly = {"time": times, **{f"{v}_gfs_seamless": vals for v in calibrate.LEAD_VARS.values()}}
+    out = calibrate.daily_max_by_lead(hourly, ["gfs_seamless"], "America/New_York")
+    assert out[1][date(2026, 11, 5)] == 60.0
